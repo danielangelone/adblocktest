@@ -46,41 +46,38 @@ export default function Home() {
   }
 
   const testDomain = async (domain: string): Promise<DomainResult> => {
-  const tests = [
-    `https://${domain}/favicon.ico?t=${Date.now()}`,
-    `https://${domain}/ads.js?t=${Date.now()}`,
-    `https://${domain}/pixel.gif?t=${Date.now()}`
+  const blockedUrls = [
+    `https://doubleclick.net/favicon.ico?t=${Date.now()}`,
+    `https://googleads.g.doubleclick.net/pagead/id?t=${Date.now()}`,
+    `https://googlesyndication.com/pagead/js/adsbygoogle.js?t=${Date.now()}`
   ];
 
-  let failed = 0;
+  let blocked = 0;
 
-  for (const url of tests) {
+  for (const url of blockedUrls) {
     const result = await new Promise<boolean>((resolve) => {
       const img = new Image();
-      const timeout = setTimeout(() => {
-        resolve(true); // considera falha
-      }, 5000); // aumentado para 5s
+      const timeout = setTimeout(() => resolve(true), 5000);
 
       img.onload = () => {
         clearTimeout(timeout);
-        resolve(false); // carregou = não bloqueado
+        resolve(false);
       };
 
       img.onerror = () => {
         clearTimeout(timeout);
-        resolve(true); // erro = possível bloqueio
+        resolve(true);
       };
 
       img.src = url;
     });
 
-    if (result) failed++;
+    if (result) blocked++;
   }
 
-  // só considera bloqueado se **todos** os recursos falharem
   return {
     domain,
-    blocked: failed === tests.length
+    blocked: blocked > 0 // se pelo menos 1 falhou, considera bloqueado
   };
 };
 
