@@ -46,34 +46,43 @@ export default function Home() {
   }
 
   const testDomain = async (domain: string): Promise<DomainResult> => {
-    return new Promise((resolve) => {
-      const img = new Image()
+  const tests = [
+    `https://${domain}/favicon.ico?t=${Date.now()}`,
+    `https://${domain}/ads.js?t=${Date.now()}`,
+    `https://${domain}/pixel.gif?t=${Date.now()}`
+  ];
+
+  let failed = 0;
+
+  for (const url of tests) {
+    const result = await new Promise<boolean>((resolve) => {
+      const img = new Image();
       const timeout = setTimeout(() => {
-        resolve({
-          domain,
-          blocked: true
-        })
-      }, 3000)
+        resolve(true); // considera falha
+      }, 5000); // aumentado para 5s
 
       img.onload = () => {
-        clearTimeout(timeout)
-        resolve({
-          domain,
-          blocked: false
-        })
-      }
+        clearTimeout(timeout);
+        resolve(false); // carregou = não bloqueado
+      };
 
       img.onerror = () => {
-        clearTimeout(timeout)
-        resolve({
-          domain,
-          blocked: true
-        })
-      }
+        clearTimeout(timeout);
+        resolve(true); // erro = possível bloqueio
+      };
 
-      img.src = `https://${domain}/favicon.ico?t=${Date.now()}`
-    })
+      img.src = url;
+    });
+
+    if (result) failed++;
   }
+
+  // só considera bloqueado se **todos** os recursos falharem
+  return {
+    domain,
+    blocked: failed === tests.length
+  };
+};
 
   const startTest = async () => {
     setIsTesting(true)
