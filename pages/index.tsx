@@ -1,175 +1,154 @@
-import { useState } from 'react'
-import Head from 'next/head'
-import adblockDomains from '../data/adblock-domains.json'
+import { useState } from 'react';
+import Head from 'next/head';
+import adblockDomains from '../data/adblock-domains.json';
 
 interface DomainResult {
-  domain: string
-  blocked: boolean
-  error?: string
-  testing?: boolean
+  domain: string;
+  blocked: boolean;
+  testing?: boolean;
 }
 
 interface CategoryResult {
-  category: string
-  provider: string
-  domains: DomainResult[]
-  blockedCount: number
-  totalCount: number
+  category: string;
+  provider: string;
+  domains: DomainResult[];
+  blockedCount: number;
+  totalCount: number;
 }
 
 export default function Home() {
-  const [results, setResults] = useState<CategoryResult[]>([])
-  const [isTesting, setIsTesting] = useState(false)
-  const [testProgress, setTestProgress] = useState(0)
-  const [totalTests, setTotalTests] = useState(0)
+  const [results, setResults] = useState<CategoryResult[]>([]);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testProgress, setTestProgress] = useState(0);
+  const [totalTests, setTotalTests] = useState(0);
 
   const prepareDomains = () => {
-    const categories: CategoryResult[] = []
-    
+    const categories: CategoryResult[] = [];
+
     Object.entries(adblockDomains).forEach(([category, providers]) => {
       Object.entries(providers as Record<string, string[]>).forEach(([provider, domains]) => {
         categories.push({
           category,
           provider,
-          domains: domains.map(domain => ({
+          domains: domains.map((domain) => ({
             domain,
             blocked: false,
-            testing: false
+            testing: false,
           })),
           blockedCount: 0,
-          totalCount: domains.length
-        })
-      })
-    })
-
-    return categories
-  }
-
-  const testDomain = async (domain: string): Promise<DomainResult> => {
-  const blockedUrls = [
-    `https://doubleclick.net/favicon.ico?t=${Date.now()}`,
-    `https://googleads.g.doubleclick.net/pagead/id?t=${Date.now()}`,
-    `https://googlesyndication.com/pagead/js/adsbygoogle.js?t=${Date.now()}`
-  ];
-
-  let blocked = 0;
-
-  for (const url of blockedUrls) {
-    const result = await new Promise<boolean>((resolve) => {
-      const img = new Image();
-      const timeout = setTimeout(() => resolve(true), 5000);
-
-      img.onload = () => {
-        clearTimeout(timeout);
-        resolve(false);
-      };
-
-      img.onerror = () => {
-        clearTimeout(timeout);
-        resolve(true);
-      };
-
-      img.src = url;
+          totalCount: domains.length,
+        });
+      });
     });
 
-    if (result) blocked++;
-  }
-
-  return {
-    domain,
-    blocked: blocked > 0 // se pelo menos 1 falhou, considera bloqueado
+    return categories;
   };
-};
+
+  const testDomain = async (domain: string): Promise<DomainResult> => {
+    const testUrl = `https://${domain}/adblock-test-${Date.now()}.js`;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
+
+      // HEAD + no-cors: ideal para detectar bloqueio de rede
+      await fetch(testUrl, {
+        method: 'HEAD',
+        mode: 'no-cors',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      return { domain, blocked: false };
+    } catch (err) {
+      // Qualquer falha de rede (incluindo abort por timeout) = bloqueado
+      return { domain, blocked: true };
+    }
+  };
 
   const startTest = async () => {
-    setIsTesting(true)
-    setTestProgress(0)
-    
-    const categories = prepareDomains()
-    setResults(categories)
-    
-    let total = 0
-    categories.forEach(cat => {
-      total += cat.domains.length
-    })
-    setTotalTests(total)
+    setIsTesting(true);
+    setTestProgress(0);
 
-    let completed = 0
+    const categories = prepareDomains();
+    setResults(categories);
+
+    const total = categories.reduce((sum, cat) => sum + cat.domains.length, 0);
+    setTotalTests(total);
+
+    let completed = 0;
 
     for (const category of categories) {
-      const updatedDomains: DomainResult[] = []
-      
       for (const domainResult of category.domains) {
-        setResults(prev => prev.map(cat => 
-          cat.category === category.category && cat.provider === category.provider
-            ? {
-                ...cat,
-                domains: cat.domains.map(d => 
-                  d.domain === domainResult.domain ? { ...d, testing: true } : d
-                )
-              }
-            : cat
-        ))
+        // Marcar como "testing"
+        setResults((prev) =>
+          prev.map((cat) =>
+            cat.category === category.category && cat.provider === category.provider
+              ? {
+                  ...cat,
+                  domains: cat.domains.map((d) =>
+                    d.domain === domainResult.domain ? { ...d, testing: true } : d
+                  ),
+                }
+              : cat
+          )
+        );
 
-        const result = await testDomain(domainResult.domain)
-        updatedDomains.push(result)
-        
-        completed++
-        setTestProgress(completed)
+        // Executar teste
+        const result = await testDomain(domainResult.domain);
+        completed++;
+        setTestProgress(completed);
 
-        setResults(prev => prev.map(cat => {
-          if (cat.category === category.category && cat.provider === category.provider) {
-            const updatedDomains = cat.domains.map(d => 
-              d.domain === domainResult.domain 
-                ? { ...result, testing: false }
-                : d
-            )
-            return {
-              ...cat,
-              domains: updatedDomains,
-              blockedCount: updatedDomains.filter(d => d.blocked).length
+        // Atualizar resultado
+        setResults((prev) =>
+          prev.map((cat) => {
+            if (cat.category === category.category && cat.provider === category.provider) {
+              const updatedDomains = cat.domains.map((d) =>
+                d.domain === domainResult.domain ? { ...result, testing: false } : d
+              );
+              const blockedCount = updatedDomains.filter((d) => d.blocked).length;
+              return { ...cat, domains: updatedDomains, blockedCount };
             }
-          }
-          return cat
-        }))
-
-        await new Promise(resolve => setTimeout(resolve, 100))
+            return cat;
+          })
+        );
       }
     }
 
-    setIsTesting(false)
-  }
+    setIsTesting(false);
+  };
 
-  const getBlockedPercentage = (category: CategoryResult) => {
-    if (category.totalCount === 0) return 0
-    const blocked = category.domains.filter(d => d.blocked).length
-    return Math.round((blocked / category.totalCount) * 100)
-  }
+  const getBlockedPercentage = (category: CategoryResult): number => {
+    if (category.totalCount === 0) return 0;
+    return Math.round((category.blockedCount / category.totalCount) * 100);
+  };
 
   const getOverallStats = () => {
-    let totalBlocked = 0
-    let totalDomains = 0
-    
-    results.forEach(cat => {
-      const blocked = cat.domains.filter(d => d.blocked).length
-      totalBlocked += blocked
-      totalDomains += cat.domains.length
-    })
+    let totalBlocked = 0;
+    let totalDomains = 0;
+
+    results.forEach((cat) => {
+      totalBlocked += cat.blockedCount;
+      totalDomains += cat.domains.length;
+    });
 
     return {
       blocked: totalBlocked,
       total: totalDomains,
-      percentage: totalDomains > 0 ? Math.round((totalBlocked / totalDomains) * 100) : 0
-    }
-  }
+      percentage: totalDomains > 0 ? Math.round((totalBlocked / totalDomains) * 100) : 0,
+    };
+  };
 
-  const stats = getOverallStats()
+  const stats = getOverallStats();
 
   return (
     <>
       <Head>
         <title>adblocktest - Teste seu Bloqueador de Anúncios</title>
-        <meta name="description" content="Teste se seu bloqueador de anúncios está funcionando corretamente" />
+        <meta
+          name="description"
+          content="Teste se seu bloqueador de anúncios está funcionando corretamente"
+        />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
@@ -181,11 +160,7 @@ export default function Home() {
         </div>
 
         <div className="controls">
-          <button 
-            onClick={startTest} 
-            disabled={isTesting}
-            className="test-button"
-          >
+          <button onClick={startTest} disabled={isTesting} className="test-button">
             {isTesting ? `Testando... ${testProgress}/${totalTests}` : 'Iniciar Teste'}
           </button>
         </div>
@@ -222,16 +197,26 @@ export default function Home() {
                   {getBlockedPercentage(category)}% bloqueado
                 </span>
               </div>
-              
+
               <div className="domains-list">
                 {category.domains.map((domainResult, domainIdx) => (
-                  <div 
+                  <div
                     key={`${domainResult.domain}-${domainIdx}`}
-                    className={`domain-item ${domainResult.blocked ? 'blocked' : 'not-blocked'} ${domainResult.testing ? 'testing' : ''}`}
+                    className={`domain-item ${
+                      domainResult.testing
+                        ? 'testing'
+                        : domainResult.blocked
+                        ? 'blocked'
+                        : 'not-blocked'
+                    }`}
                   >
                     <span className="domain-name">{domainResult.domain}</span>
                     <span className="domain-status">
-                      {domainResult.testing ? '⏳' : domainResult.blocked ? '✅ Bloqueado' : '❌ Não Bloqueado'}
+                      {domainResult.testing
+                        ? '⏳'
+                        : domainResult.blocked
+                        ? '✅ Bloqueado'
+                        : '❌ Não Bloqueado'}
                     </span>
                   </div>
                 ))}
@@ -246,7 +231,8 @@ export default function Home() {
           max-width: 1200px;
           margin: 0 auto;
           padding: 2rem;
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu,
+            Cantarell, sans-serif;
         }
 
         .header {
@@ -409,6 +395,7 @@ export default function Home() {
           font-family: 'Monaco', 'Courier New', monospace;
           font-size: 0.9rem;
           color: #333;
+          word-break: break-all;
         }
 
         .domain-status {
@@ -448,6 +435,5 @@ export default function Home() {
         }
       `}</style>
     </>
-  )
+  );
 }
-
